@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/AndrewN/Desktop/RaidSim/simc-source/build-wasm/cmake_install.cmake",
+		"C:/Users/AndrewN/Desktop/RaidSim/simc-source/build-wasm/engine/cmake_install.cmake",
+		"C:/Users/AndrewN/Desktop/RaidSim/simc-source/build-wasm/tests/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
