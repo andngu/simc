@@ -12,7 +12,7 @@
 #include "item/item.hpp"
 #include "util/string_view.hpp"
 
-#ifndef SC_NO_THREADING
+
 
 #include <future>
 #include <iostream>
@@ -286,9 +286,11 @@ sim_control_t* profilesets_t::create_sim_options( const sim_control_t* original,
 profilesets_t::profilesets_t() : m_state( STARTED ), m_mode( SEQUENTIAL ),
     m_original( nullptr ), m_actor_indices(),
     m_work_index( 0 ),
+#ifndef SC_NO_THREADING
     m_control_lock( m_mutex, std::defer_lock ),
     m_max_workers( 0 ),
     m_work_lock( m_work_mutex, std::defer_lock ),
+#endif
     m_total_elapsed()
 {
 
@@ -296,6 +298,7 @@ profilesets_t::profilesets_t() : m_state( STARTED ), m_mode( SEQUENTIAL ),
 
 profilesets_t::~profilesets_t()
 {
+#ifndef SC_NO_THREADING
   range::for_each( m_thread, []( std::thread& thread ) {
     if ( thread.joinable() )
     {
@@ -304,6 +307,7 @@ profilesets_t::~profilesets_t()
   } );
 
   range::for_each( m_current_work, []( std::unique_ptr<worker_t>& worker ) { worker -> thread().join(); } );
+#endif
 }
 
 profile_set_t::profile_set_t( std::string name, sim_control_t* opts, bool has_output ) :
@@ -371,6 +375,7 @@ profile_result_t& profile_set_t::result( scale_metric_e metric )
   return m_results.back();
 }
 
+#ifndef SC_NO_THREADING
 worker_t::worker_t( profilesets_t* master, sim_t* p, profile_set_t* ps ) :
   m_done( false ), m_parent( p ), m_master( master ), m_sim( nullptr ), m_profileset( ps ),
   m_thread( nullptr )
@@ -427,18 +432,24 @@ void worker_t::execute()
 
   m_master->notify_worker();
 }
+#endif
 
 // Count the number of running workers
 size_t profilesets_t::n_workers() const
 {
+#ifndef SC_NO_THREADING
   return range::count_if( m_current_work, []( const std::unique_ptr<worker_t>& worker ) {
     return ! worker -> is_done();
   } );
+#else
+  return 0;
+#endif
 }
 
 // Note, we must own the work mutex here.
 void profilesets_t::cleanup_work()
 {
+#ifndef SC_NO_THREADING
   assert( m_work_lock.owns_lock() );
 
   auto it = m_current_work.begin();
@@ -461,11 +472,13 @@ void profilesets_t::cleanup_work()
       ++it;
     }
   }
+#endif
 }
 
 // Wait until we have all the work done
 void profilesets_t::finalize_work()
 {
+#ifndef SC_NO_THREADING
   // Nothing to finalize for sequential profileset model
   if ( m_mode == SEQUENTIAL )
   {
@@ -490,6 +503,7 @@ void profilesets_t::finalize_work()
 
     m_work_lock.unlock();
   }
+#endif
 }
 
 void profilesets_t::generate_work( sim_t* parent, std::unique_ptr<profile_set_t>& ptr_set )
@@ -514,6 +528,7 @@ void profilesets_t::generate_work( sim_t* parent, std::unique_ptr<profile_set_t>
     }
   }
   // Parallel processing
+#ifndef SC_NO_THREADING
   else
   {
     m_work_lock.lock();
@@ -535,6 +550,7 @@ void profilesets_t::generate_work( sim_t* parent, std::unique_ptr<profile_set_t>
 
     m_work_lock.unlock();
   }
+#endif
 }
 
 // Ensure profileset options are valid, and also perform basic simulator initialization for the
@@ -546,15 +562,21 @@ bool profilesets_t::parse( sim_t* sim )
     if ( sim->canceled )
     {
       set_state( DONE );
+#ifndef SC_NO_THREADING
       m_control.notify_one();
+#endif
       return false;
     }
 
+#ifndef SC_NO_THREADING
     m_mutex.lock();
+#endif
 
     if ( m_init_index == sim->profileset_map.cend() )
     {
+#ifndef SC_NO_THREADING
       m_mutex.unlock();
+#endif
       break;
     }
 
@@ -563,7 +585,9 @@ bool profilesets_t::parse( sim_t* sim )
 
     ++m_init_index;
 
+#ifndef SC_NO_THREADING
     m_mutex.unlock();
+#endif
 
     sim_control_t* control = nullptr;
     bool has_output_opts = false;
@@ -576,14 +600,18 @@ bool profilesets_t::parse( sim_t* sim )
         if ( !control )
         {
           set_state( DONE );
+#ifndef SC_NO_THREADING
           m_control.notify_one();
+#endif
           return false;
         }
       }
       catch ( const std::exception& )
       {
         set_state( DONE );
+#ifndef SC_NO_THREADING
         m_control.notify_one();
+#endif
         if ( control )
           delete control;
 
@@ -612,7 +640,9 @@ bool profilesets_t::parse( sim_t* sim )
       try
       {
         set_state( DONE );
+#ifndef SC_NO_THREADING
         m_control.notify_one();
+#endif
         if ( control )
           delete control;
 
@@ -626,10 +656,14 @@ bool profilesets_t::parse( sim_t* sim )
       }
     }
 
+#ifndef SC_NO_THREADING
     m_mutex.lock();
+#endif
     m_profilesets.push_back( std::make_unique<profile_set_t>( profileset_name, control, has_output_opts ) );
+#ifndef SC_NO_THREADING
     m_control.notify_one();
     m_mutex.unlock();
+#endif
   }
 
   set_state( RUNNING );
@@ -656,6 +690,7 @@ void profilesets_t::initialize( sim_t* sim )
                                                 sim->profileset_report_player_index, sim->player_no_pet_list.size() ) );
   }
 
+#ifndef SC_NO_THREADING
   if ( sim->profileset_init_threads < 1 )
   {
     sim->error( "No profileset init threads given, profilesets cannot continue" );
@@ -681,6 +716,7 @@ void profilesets_t::initialize( sim_t* sim )
   {
     m_mode = PARALLEL;
   }
+#endif
 
   m_profilesets.reserve( sim -> profileset_map.size() + 1 );
 
@@ -698,6 +734,7 @@ void profilesets_t::initialize( sim_t* sim )
 
   m_init_index = sim -> profileset_map.cbegin();
 
+#ifndef SC_NO_THREADING
   for ( int i = 0; i < sim -> profileset_init_threads; ++i )
   {
     m_thread.emplace_back([ this, sim ]() {
@@ -707,18 +744,26 @@ void profilesets_t::initialize( sim_t* sim )
       }
     } );
   }
+#else
+  if ( ! parse( sim ) )
+  {
+    sim -> cancel();
+  }
+#endif
 }
 
 void profilesets_t::cancel()
 {
   if ( ! is_done() )
   {
+#ifndef SC_NO_THREADING
     range::for_each( m_thread, []( std::thread& thread ) {
       if ( thread.joinable() )
       {
         thread.join();
       }
     } );
+#endif
   }
 
   set_state( DONE );
@@ -726,24 +771,34 @@ void profilesets_t::cancel()
 
 void profilesets_t::set_state( state new_state )
 {
+#ifndef SC_NO_THREADING
   m_mutex.lock();
+#endif
 
   m_state = new_state;
 
+#ifndef SC_NO_THREADING
   m_mutex.unlock();
+#endif
 }
 
 std::string profilesets_t::current_profileset_name()
 {
+#ifndef SC_NO_THREADING
   m_control_lock.lock();
+#endif
   if ( is_done() || m_work_index == 0 )
   {
+#ifndef SC_NO_THREADING
     m_control_lock.unlock();
+#endif
     return {};
   }
 
   std::string profileset_name = m_profilesets[ m_work_index - 1 ] -> name();
+#ifndef SC_NO_THREADING
   m_control_lock.unlock();
+#endif
 
   return profileset_name;
 }
@@ -761,6 +816,7 @@ bool profilesets_t::iterate( sim_t* parent )
 
   while ( ! is_done() )
   {
+#ifndef SC_NO_THREADING
     m_control_lock.lock();
 
     // Wait until we have at least something to sim
@@ -782,6 +838,14 @@ bool profilesets_t::iterate( sim_t* parent )
     auto& set = m_profilesets[ m_work_index++ ];
 
     m_control_lock.unlock();
+#else
+    if ( m_work_index >= m_profilesets.size() )
+    {
+      break;
+    }
+
+    auto& set = m_profilesets[ m_work_index++ ];
+#endif
 
     generate_work( parent, set );
   }
@@ -809,7 +873,9 @@ bool profilesets_t::iterate( sim_t* parent )
 
 void profilesets_t::notify_worker()
 {
+#ifndef SC_NO_THREADING
   m_work.notify_one();
+#endif
 }
 
 int profilesets_t::max_name_length() const
@@ -828,6 +894,7 @@ int profilesets_t::max_name_length() const
 
 void profilesets_t::output_progressbar( const sim_t* parent ) const
 {
+#ifndef SC_NO_THREADING
   if ( m_max_workers == 0 )
   {
     return;
@@ -881,6 +948,7 @@ void profilesets_t::output_progressbar( const sim_t* parent ) const
 
   std::cout << s.str();
   std::fflush( stdout );
+#endif
 }
 
 std::vector<const profile_set_t*> profilesets_t::generate_sorted_profilesets( bool mean ) const
@@ -1142,22 +1210,3 @@ sim_control_t* filter_control( const sim_control_t* control )
 
 } /* Namespace profileset ends */
 
-#else
-
-namespace profileset
-{
-profilesets_t::profilesets_t() {}
-profilesets_t::~profilesets_t() {}
-void create_options( sim_t* ) {}
-sim_control_t* filter_control( const sim_control_t* ) { return nullptr; }
-void profilesets_t::initialize( sim_t* ) {}
-std::string profilesets_t::current_profileset_name() { return "DUMMY"; }
-void profilesets_t::cancel() {}
-bool profilesets_t::iterate( sim_t*  ) { return true ;}
-void profilesets_t::output_html( const sim_t&, std::ostream& ) const {}
-void profilesets_t::output_text( const sim_t&, std::ostream& ) const {}
-size_t profilesets_t::n_profilesets() const { return 0; }
-bool profilesets_t::is_running() const { return false; }
-}
-
-#endif

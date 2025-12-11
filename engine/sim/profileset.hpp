@@ -30,13 +30,6 @@ namespace profileset
 {
 class profilesets_t;
 
-#ifdef SC_NO_THREADING
-class profile_set_t;
-class profile_output_data_t;
-struct statistical_data_t;
-#endif
-
-#ifndef SC_NO_THREADING
 struct statistical_data_t
 {
   double min, first_quartile, median, mean, third_quartile, max, std_dev, mean_std_dev;
@@ -416,6 +409,7 @@ public:
   }
 };
 
+#ifndef SC_NO_THREADING
 class worker_t
 {
   bool           m_done;
@@ -461,7 +455,7 @@ private:
     RUNNING,            // Finished initializing, running through profilesets
     DONE                // Finished profileset iterating
   };
-#ifndef SC_NO_THREADING
+
   enum simulation_mode
   {
     SEQUENTIAL = 0,
@@ -474,6 +468,8 @@ private:
   std::unique_ptr<sim_control_t>         m_original;
   std::vector<size_t>                    m_actor_indices;
   size_t                                 m_work_index;
+  
+#ifndef SC_NO_THREADING
   std::mutex                             m_mutex;
   std::unique_lock<std::mutex>           m_control_lock;
   std::condition_variable                m_control;
@@ -494,7 +490,17 @@ private:
   // Parallel profileset stats collection
   chrono::wall_clock::time_point         m_start_time;
   chrono::wall_clock::duration           m_total_elapsed;
+#else
+  // For sequential builds, we just need an iterator for parsing
+  opts::map_list_t::const_iterator       m_init_index;
+  
+  // Non-threaded time tracking if needed
+  chrono::wall_clock::time_point         m_start_time;
+  chrono::wall_clock::duration           m_total_elapsed;
 #endif
+
+
+
 
   int max_name_length() const;
 
